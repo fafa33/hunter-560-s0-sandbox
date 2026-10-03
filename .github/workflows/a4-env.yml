@@ -1,4 +1,4 @@
-name: S0 A-4 environment branch policy
+name: S0 A-4 environment branch policy (attacker-modified copy)
 on: workflow_dispatch
 permissions: {}
 jobs:
