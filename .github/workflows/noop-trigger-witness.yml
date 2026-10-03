@@ -1,0 +1,8 @@
+name: S0 trigger witness
+on: [push, create, delete]
+permissions: {}
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "S0RESULT witness event=$GITHUB_EVENT_NAME ref=$GITHUB_REF actor=$GITHUB_ACTOR"
