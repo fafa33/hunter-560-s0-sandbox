@@ -1,0 +1,64 @@
+name: S0 A-5 artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      source_run: {required: false, type: string, default: ""}
+permissions:
+  actions: read
+jobs:
+  up1:
+    runs-on: ubuntu-24.04
+    outputs:
+      id: ${{ steps.u.outputs.artifact-id }}
+      digest: ${{ steps.u.outputs.artifact-digest }}
+    steps:
+      - run: head -c 4096 /dev/urandom > payload.bin && echo "S0RESULT up1 local_sha256=$(sha256sum payload.bin|cut -d' ' -f1)"
+      - id: u
+        uses: actions/upload-artifact@v4
+        with: {name: s0-transport, path: payload.bin, retention-days: 1}
+      - run: echo "S0RESULT up1 artifact_id=${{ steps.u.outputs.artifact-id }} artifact_digest=${{ steps.u.outputs.artifact-digest }}"
+  up2:
+    needs: up1
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo different > payload.bin
+      - id: u
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with: {name: s0-transport, path: payload.bin, retention-days: 1}
+      - run: echo "S0RESULT up2 same_name_upload_outcome=${{ steps.u.outcome }}"
+  inspect:
+    needs: up2
+    runs-on: ubuntu-24.04
+    steps:
+      - env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[]|"S0RESULT inspect name=\(.name) id=\(.id) size=\(.size_in_bytes) digest=\(.digest) created=\(.created_at) expires=\(.expires_at)"'
+  same_run_download:
+    needs: up2
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: s0-transport}
+      - run: echo "S0RESULT same_run_download sha256=$(sha256sum payload.bin|cut -d' ' -f1)"
+  cross_run_no_token:
+    if: inputs.source_run != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - id: d
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with: {name: s0-transport, run-id: "${{ inputs.source_run }}"}
+      - run: echo "S0RESULT cross_run_without_token outcome=${{ steps.d.outcome }} file=$(ls payload.bin 2>/dev/null || echo none)"
+  cross_run_with_token:
+    if: inputs.source_run != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - id: d
+        uses: actions/download-artifact@v4
+        with:
+          name: s0-transport
+          run-id: ${{ inputs.source_run }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+      - run: echo "S0RESULT cross_run_with_token sha256=$(sha256sum payload.bin|cut -d' ' -f1)"
