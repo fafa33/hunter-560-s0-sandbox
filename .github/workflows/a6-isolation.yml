@@ -1,0 +1,32 @@
+name: S0 A-6 isolation uid
+on: workflow_dispatch
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: inline-expanded secret step (writes a temp script)
+        run: test -n "${{ secrets.S0_REPO_CANARY }}" && echo "S0RESULT inline_step ran"
+      - name: create isolation user
+        run: |
+          sudo useradd --create-home --shell /bin/bash s0untrusted
+          echo "S0RESULT user=$(id s0untrusted) runner=$(id) yama_ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope) os=$(. /etc/os-release; echo $VERSION_ID) kernel=$(uname -r)"
+          echo "S0RESULT runner_sudo=$(sudo -n true && echo yes || echo no) docker_sock=$(stat -c '%U:%G:%a' /var/run/docker.sock 2>/dev/null || echo none) runner_groups=$(id -Gn | tr ' ' ',')"
+      - name: probes
+        env:
+          S0_CANARY: ${{ secrets.S0_REPO_CANARY }}
+        run: |
+          U() { sudo -n -u s0untrusted -- /usr/bin/env -i PATH=/usr/bin:/bin HOME=/home/s0untrusted "$@"; }
+          for p in $$ $PPID $(pgrep -f Runner.Worker) $(pgrep -f Runner.Listener); do
+            if U cat /proc/$p/environ >/dev/null 2>&1; then echo "S0RESULT environ pid=$p comm=$(cat /proc/$p/comm) READABLE"; else echo "S0RESULT environ pid=$p comm=$(cat /proc/$p/comm) denied"; fi
+            if U cat /proc/$p/mem >/dev/null 2>&1; then echo "S0RESULT mem pid=$p READABLE"; else echo "S0RESULT mem pid=$p denied"; fi
+          done
+          echo "S0RESULT untrusted_sudo=$(U sudo -n true >/dev/null 2>&1 && echo ALLOWED || echo denied)"
+          echo "S0RESULT untrusted_docker=$(U docker ps >/dev/null 2>&1 && echo ALLOWED || echo denied)"
+          HITS=$(U grep -rIlF --exclude-dir=proc -- "$S0_CANARY" /home /tmp /etc /opt /var/tmp /run 2>/dev/null | head -5 | tr '\n' ',')
+          echo "S0RESULT untrusted_canary_file_hits=${HITS:-none}"
+          echo "S0RESULT temp_dir_perms=$(stat -c '%a %U' /home/runner/work/_temp 2>/dev/null) home_perms=$(stat -c '%a %U' /home/runner)"
+          sudo iptables -A OUTPUT -m owner --uid-owner s0untrusted -j REJECT
+          sudo ip6tables -A OUTPUT -m owner --uid-owner s0untrusted -j REJECT
+          echo "S0RESULT untrusted_network=$(U curl -sS -m 10 -o /dev/null https://api.github.com >/dev/null 2>&1 && echo ALLOWED || echo blocked) runner_network=$(curl -sS -m 10 -o /dev/null https://api.github.com && echo allowed || echo blocked)"
+          echo "S0RESULT untrusted_dns_udp=$(U getent hosts github.com >/dev/null 2>&1 && echo resolves || echo blocked)"

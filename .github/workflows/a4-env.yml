@@ -1,0 +1,17 @@
+name: S0 A-4 environment branch policy
+on: workflow_dispatch
+permissions: {}
+jobs:
+  with_env:
+    runs-on: ubuntu-24.04
+    environment: s0-protected
+    steps:
+      - env:
+          C: ${{ secrets.S0_CANARY }}
+        run: if [ -n "$C" ]; then echo "S0RESULT job=with_env secret=present sha12=$(printf %s "$C"|sha256sum|cut -c1-12) ref=$GITHUB_REF"; else echo "S0RESULT job=with_env secret=absent ref=$GITHUB_REF"; fi
+  without_env:
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          C: ${{ secrets.S0_CANARY }}
+        run: if [ -n "$C" ]; then echo "S0RESULT job=without_env secret=present ref=$GITHUB_REF"; else echo "S0RESULT job=without_env secret=absent ref=$GITHUB_REF"; fi
