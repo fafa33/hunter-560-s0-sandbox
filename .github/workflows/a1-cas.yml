@@ -1,0 +1,42 @@
+name: S0 A-1 CAS race
+on:
+  workflow_dispatch:
+    inputs:
+      ref_name: {required: true, type: string}
+      mode: {required: true, type: string}
+      barrier_epoch: {required: true, type: string}
+permissions:
+  contents: write
+jobs:
+  race:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        writer: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30]
+    steps:
+      - name: race
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref_name }}
+          MODE: ${{ inputs.mode }}
+          BARRIER: ${{ inputs.barrier_epoch }}
+          W: ${{ matrix.writer }}
+        run: |
+          set -u
+          git init -q w && cd w
+          git config user.name s0 && git config user.email s0@example.invalid
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          g() { git -c http.extraheader="$AUTH" "$@"; }
+          URL="https://github.com/${GITHUB_REPOSITORY}.git"
+          g fetch -q "$URL" "+refs/heads/main:refs/remotes/m"
+          OBS=$(g ls-remote "$URL" "$REF" | cut -f1)
+          PARENT=()
+          if [ -n "$OBS" ]; then g fetch -q "$URL" "$OBS" && PARENT=(-p "$OBS"); fi
+          C=$(echo "writer $W run $GITHUB_RUN_ID" | git commit-tree "$(git rev-parse 'refs/remotes/m^{tree}')" "${PARENT[@]}")
+          now=$(date +%s); if [ "$BARRIER" -gt "$now" ]; then sleep $((BARRIER-now)); fi
+          LEASE=(); [ "$MODE" = lease ] && LEASE=("--force-with-lease=$REF:$OBS")
+          if OUT=$(g push "${LEASE[@]}" "$URL" "$C:$REF" 2>&1); then R=WIN; else R=LOSE; fi
+          WHY=$(echo "$OUT" | grep -oiE 'stale info|already exists|cannot lock ref|failed to update ref|fetch first|non-fast-forward|rule violations?|cannot (update|delete|create)[a-z ]*|protected|denied' | head -1 | tr ' ' '_')
+          echo "S0RESULT writer=$W result=$R observed=${OBS:-none} commit=$C t=$(date +%s.%N) why=${WHY:-none}"
