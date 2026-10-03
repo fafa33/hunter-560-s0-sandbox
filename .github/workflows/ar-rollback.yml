@@ -1,0 +1,57 @@
+name: S0 OD-4 anti-rollback
+on:
+  workflow_dispatch:
+    inputs:
+      issue: {required: true, type: string}
+permissions:
+  contents: write
+jobs:
+  attack:
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          N: ${{ inputs.issue }}
+        run: |
+          set -u
+          git init -q w && cd w && git config user.name s0 && git config user.email s0@example.invalid
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          g() { git -c http.extraheader="$AUTH" "$@"; }
+          URL="https://github.com/${GITHUB_REPOSITORY}.git"
+          g fetch -q "$URL" "+refs/heads/main:refs/remotes/m"; T=$(git rev-parse 'refs/remotes/m^{tree}')
+          C1=$(echo "state seq1 issue $N" | git commit-tree "$T"); C2=$(echo "state seq2 issue $N" | git commit-tree "$T" -p "$C1")
+          try() { local name=$1; shift; if OUT=$(g push "$@" 2>&1); then echo "S0RESULT $name=ACCEPTED"; else echo "S0RESULT $name=rejected why=$(echo "$OUT" | grep -oiE 'cannot (update|delete|create)[a-z ]*|rule violations?|already exists|non-fast-forward|stale info|protected|fetch first' | head -1 | tr ' ' '_')"; fi; }
+          TAG=refs/tags/hunter-state/v1/issue-$N
+          BR=refs/heads/hunter-state/issue-$N
+          CR=refs/hunter/issue-agent/v1/issues/$N
+          # --- tag log namespace (ruleset: deletion + update restricted, no bypass)
+          try tag_create_seq1 "$URL" "$C1:$TAG/000001"
+          try tag_create_seq2 "$URL" "$C2:$TAG/000002"
+          try tag_recreate_seq1_same "$URL" "$C1:$TAG/000001"
+          try tag_recreate_seq2_other "$URL" "$C1:$TAG/000002"
+          try tag_force_move_seq2_back "$URL" "+$C1:$TAG/000002"
+          try tag_delete_seq2 "$URL" ":$TAG/000002"
+          echo "S0RESULT tag_seq2_now=$(g ls-remote "$URL" "$TAG/000002" | cut -c1-12) expect=${C2:0:12}"
+          # --- branch namespace (ruleset: deletion + non_fast_forward, no bypass)
+          try br_create_c1 "$URL" "$C1:$BR"
+          try br_ff_c2 "$URL" "$C2:$BR"
+          try br_force_rollback_to_c1 "$URL" "+$C1:$BR"
+          try br_lease_rollback_to_c1 "--force-with-lease=$BR:$C2" "$URL" "$C1:$BR"
+          try br_delete "$URL" ":$BR"
+          echo "S0RESULT br_now=$(g ls-remote "$URL" "$BR" | cut -c1-12) expect=${C2:0:12}"
+          # --- unprotected custom ref (control: R-1 as in revision 2)
+          try cr_create_c1 "$URL" "$C1:$CR"
+          try cr_ff_c2 "$URL" "$C2:$CR"
+          try cr_force_rollback_to_c1 "$URL" "+$C1:$CR"
+          echo "S0RESULT cr_now=$(g ls-remote "$URL" "$CR" | cut -c1-12) c1=${C1:0:12}"
+      - name: ruleset readability with GITHUB_TOKEN (contents:write, no administration)
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          for path in "rulesets" "rulesets?includes_parents=true"; do
+            code=$(curl -s -o /tmp/r.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/$path"); echo "S0RESULT token_GET_$path=$code n=$(jq length /tmp/r.json 2>/dev/null)"
+          done
+          for id in $(jq -r '.[].id' /tmp/r.json 2>/dev/null); do
+            code=$(curl -s -o /tmp/one.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/$id"); echo "S0RESULT token_GET_ruleset_$id=$code updated_at=$(jq -r .updated_at /tmp/one.json) enforcement=$(jq -r .enforcement /tmp/one.json) bypass=$(jq -c .bypass_actors /tmp/one.json) rules=$(jq -c '[.rules[]?.type]' /tmp/one.json)"
+            code=$(curl -s -o /tmp/h.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/$id/history"); echo "S0RESULT token_GET_ruleset_${id}_history=$code versions=$(jq length /tmp/h.json 2>/dev/null)"
+          done
+          code=$(curl -s -o /tmp/rb.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/rules/branches/hunter-state/issue-${{ inputs.issue }}"); echo "S0RESULT token_GET_rules_for_branch=$code rules=$(jq -c '[.[]?|{type,ruleset_id}]' /tmp/rb.json)"

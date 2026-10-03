@@ -1,0 +1,19 @@
+name: S0 A-12 fresh VM per job
+on: workflow_dispatch
+permissions: {}
+jobs:
+  j1:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo hunter > /tmp/s0-marker; sudo sh -c 'echo hunter > /root/s0-marker'
+          echo "S0RESULT job=j1 boot_id=$(cat /proc/sys/kernel/random/boot_id) machine_id=$(cat /etc/machine-id) host=$(hostname) runner=$RUNNER_NAME hostkey=$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null|cut -c1-16)"
+  j2:
+    needs: j1
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "S0RESULT job=j2 marker_tmp=$(test -e /tmp/s0-marker && echo PRESENT || echo absent) marker_root=$(sudo test -e /root/s0-marker && echo PRESENT || echo absent) boot_id=$(cat /proc/sys/kernel/random/boot_id) machine_id=$(cat /etc/machine-id) host=$(hostname) runner=$RUNNER_NAME hostkey=$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null|cut -c1-16)"
+  j3:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "S0RESULT job=j3 marker_tmp=$(test -e /tmp/s0-marker && echo PRESENT || echo absent) boot_id=$(cat /proc/sys/kernel/random/boot_id) machine_id=$(cat /etc/machine-id) host=$(hostname) runner=$RUNNER_NAME"
